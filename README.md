@@ -12,6 +12,9 @@ AYN Thor bottom-screen deck (Amethyst launcher). No sockets — files are the bu
 - [x] Tap-to-move (`command.json`) — slot swap when `seq` increases
 - [x] Armor + offhand in the JSON stream (slots 36–40)
 - [x] Hotbar `selected` field (0–8)
+- [x] CPU minimap (`map.png` + `map.json`) — MapColor sample, not FBO blit
+- [x] HUD (`hud.json`) — health, hunger, pos, biome, time, effects
+- [x] Chat ring (`chat.json`) — last 40 lines
 
 ## Target
 
@@ -34,6 +37,10 @@ unless you must.
 | `inventory.json` | mod | launcher | Atomic write (`tmp` + move). Written only when contents change. |
 | `icons/<stem>.png` | mod | launcher | Launcher looks up `slot.icon + ".png"` with `inScaled=false`. |
 | `command.json` | launcher | mod | `{"seq":N,"from":fromSlot,"to":toSlot,"button":0}`. Act only when `seq` increases. |
+| `map.png` | mod | launcher | 128×128 ARGB PNG. 1 pixel = 1 block. Player is the center pixel (64, 64). |
+| `map.json` | mod | launcher | `{seq, x, y, z, yaw, dim, w, h, scale, biome}`. `scale` is 1. |
+| `hud.json` | mod | launcher | Health, hunger, air, xp, armor, pos, biome, time, weather, effects. |
+| `chat.json` | mod | launcher | `{seq, lines:[{from, text, kind}]}` last 40. `kind` is `chat`/`system`/`action`. |
 
 ### `inventory.json`
 
@@ -82,6 +89,52 @@ values are ignored. Missing file, partial JSON, and `player == null` are no-ops.
 
 `button: 0` is a full-stack swap (left click). The move is applied on the client
 tick thread via `Inventory.setItem` / container click (see NOTES.md).
+
+
+The launcher should show **Map** as the default bottom-screen tab. Inventory,
+HUD, and chat are additional tabs on the same file bus.
+
+### `map.png` / `map.json`
+
+CPU-sampled top-down surface. **Not** an FBO blit of the in-game map item
+(that path is broken on Pojav GLES). Every 10 ticks, or when the player moved
+≥ 2 blocks or yaw changed ≥ 15°, but never more often than every 5 ticks:
+
+1. On the client thread, sample a 128×128 column around the player.
+2. For each `(dx, dz)` in `-64..63`, scan down from last-known height (or
+   `playerY+16`, capped at `playerY+32`) at most 24 blocks for the first
+   non-air block with a `MapColor`.
+3. Water: count a few blocks of depth for the classic water-blue shade.
+4. Shade land darker if it is lower than its north neighbor (vanilla map).
+5. Write PNG atomically (`map.png.tmp` then `Files.move`).
+
+Paused game, null world, and null player skip the write. Exceptions are
+swallowed so a map miss never crashes the game. Nether and End still sample
+(their `MapColor`s just look different).
+
+```json
+{"seq":1,"x":1.20,"y":64.00,"z":-8.40,"yaw":90.00,"dim":"minecraft:overworld","w":128,"h":128,"scale":1,"biome":"plains"}
+```
+
+### `hud.json`
+
+Written every 5 ticks from `LocalPlayer`. `absorption` is optional extra.
+`time` is one of `day` / `sunset` / `night` / `sunrise`. `weather` is
+`clear` / `rain` / `thunder`.
+
+```json
+{"seq":1,"hp":20.00,"maxHp":20.00,"absorption":0.00,"hunger":20,"saturation":5.00,"air":300,"xp":0.42,"level":12,"armor":0,"x":1.20,"y":64.00,"z":-8.40,"yaw":90.00,"pitch":12.00,"biome":"plains","dim":"minecraft:overworld","time":"day","dayTime":6000,"weather":"clear","effects":[{"id":"minecraft:speed","amp":0,"secs":12}]}
+```
+
+### `chat.json`
+
+Fabric `ClientReceiveMessageEvents.CHAT` + `GAME`. Ring of 40. Write is
+debounced 2 ticks so spam does not hammer the disk. `§` formatting codes are
+stripped.
+
+```json
+{"seq":1,"lines":[{"from":"Steve","text":"hello","kind":"chat"}]}
+```
 
 ## Install
 
