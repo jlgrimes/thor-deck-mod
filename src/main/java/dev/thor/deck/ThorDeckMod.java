@@ -21,6 +21,9 @@ import java.nio.file.StandardCopyOption;
  *   <li>{@code inventory.json} — mod writes, launcher reads</li>
  *   <li>{@code icons/<stem>.png} — mod writes, launcher reads</li>
  *   <li>{@code command.json} — launcher writes, mod reads (tap-to-move)</li>
+ *   <li>{@code map.png} / {@code map.json} — CPU minimap (MapColor sample)</li>
+ *   <li>{@code hud.json} — health, hunger, pos, biome, time, effects</li>
+ *   <li>{@code chat.json} — last 40 chat/system/action lines</li>
  * </ul>
  */
 public class ThorDeckMod implements ClientModInitializer {
@@ -53,17 +56,22 @@ public class ThorDeckMod implements ClientModInitializer {
         } catch (Exception e) {
             System.err.println("[ThorDeck] could not create icons dir: " + e);
         }
-        System.out.println("[ThorDeck] inventory -> " + outFile + "  icons -> " + iconDir);
+        System.out.println("[ThorDeck] inventory -> " + outFile + "  icons -> " + iconDir
+                + "  map/hud/chat -> " + dir);
+        DeckChat.init(dir);
 
         ClientTickEvents.END_CLIENT_TICK.register(this::onClientTick);
     }
 
     private void onClientTick(Minecraft client) {
+        DeckChat.tick();
         LocalPlayer player = client.player;
         if (player == null) {
             return;
         }
         pollCommand(client, player);
+        DeckHud.tick(client, player, dir);
+        DeckMap.tick(client, player, dir);
         if (++tickCounter < WRITE_EVERY_TICKS) {
             return;
         }
@@ -127,8 +135,8 @@ public class ThorDeckMod implements ClientModInitializer {
         if (selected < 0 || selected > 8) {
             selected = 0;
         }
-        sb.append("{\"size\":").append(DeckSlots.SIZE)
-                .append(",\"selected\":").append(selected)
+        sb.append("{\"size\":" ).append(DeckSlots.SIZE)
+                .append(",\"selected\":" ).append(selected)
                 .append(",\"slots\":[");
         boolean first = true;
         for (int i = 0; i < DeckSlots.SIZE; i++) {
@@ -144,10 +152,10 @@ public class ThorDeckMod implements ClientModInitializer {
             String name = escape(stack.getHoverName().getString());
             String stem = ItemIcons.stemFor(stack);
             ItemIcons.export(client, stack, iconDir, stem);
-            sb.append("{\"i\":").append(i)
+            sb.append("{\"i\":" ).append(i)
                     .append(",\"id\":\"").append(escape(id)).append('"')
                     .append(",\"n\":\"").append(name).append('"')
-                    .append(",\"c\":").append(stack.getCount())
+                    .append(",\"c\":" ).append(stack.getCount())
                     .append(",\"icon\":\"").append(escape(stem)).append('"')
                     .append('}');
         }
