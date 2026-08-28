@@ -127,7 +127,7 @@ public class ThorDeckMod implements ClientModInitializer {
         if (selected < 0 || selected > 8) {
             selected = 0;
         }
-        sb.append("{\"size\":" ).append(DeckSlots.SIZE)
+        sb.append("{\"size\":").append(DeckSlots.SIZE)
                 .append(",\"selected\":").append(selected)
                 .append(",\"slots\":[");
         boolean first = true;
@@ -145,10 +145,10 @@ public class ThorDeckMod implements ClientModInitializer {
             String stem = ItemIcons.stemFor(stack);
             ItemIcons.export(client, stack, iconDir, stem);
             sb.append("{\"i\":").append(i)
-                    .append(",\"id\":"\"").append(escape(id)).append('"')
-                    .append(",\"n\":"\"").append(name).append('"')
+                    .append(",\"id\":\"").append(escape(id)).append('"')
+                    .append(",\"n\":\"").append(name).append('"')
                     .append(",\"c\":").append(stack.getCount())
-                    .append(",\"icon\":"\"").append(escape(stem)).append('"')
+                    .append(",\"icon\":\"").append(escape(stem)).append('"')
                     .append('}');
         }
         sb.append("]}");
