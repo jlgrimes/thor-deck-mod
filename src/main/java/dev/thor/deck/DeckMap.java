@@ -26,11 +26,17 @@ import java.util.Optional;
  * on the client thread (world access is not thread-safe) and writes
  * {@code thor_deck/map.png} + {@code thor_deck/map.json}.
  *
+ * <p>Scan is 64×64 (every other world column) then nearest-neighbor upscaled
+ * to 128×128 so the file contract stays {@code w=h=128}, player cell (64, 64).
+ * A full 128×128×24 column walk hitches the client thread.
+ *
  * <p>Do not FBO-blit the in-game map item — that path is broken on Pojav GLES.
  */
 public final class DeckMap {
     public static final int SIZE = 128;
     public static final int HALF = SIZE / 2; // player cell is (64, 64)
+    /** Sample every other pixel; NN-upscale fills the 128×128 PNG. */
+    private static final int SAMPLE = SIZE / 2;
     private static final int MIN_INTERVAL_TICKS = 5;
     private static final int PERIOD_TICKS = 10;
     private static final int MAX_SCAN = 24;
@@ -44,8 +50,8 @@ public final class DeckMap {
     private static double lastX = Double.NaN;
     private static double lastZ = Double.NaN;
     private static float lastYaw = Float.NaN;
-    /** Last surface Y per pixel, so the next scan can start nearby. */
-    private static final int[] lastHeight = new int[SIZE * SIZE];
+    /** Last surface Y per sample cell, so the next scan can start nearby. */
+    private static final int[] lastHeight = new int[SAMPLE * SAMPLE];
     private static boolean heightsInit = false;
 
     private DeckMap() {}
@@ -118,30 +124,36 @@ public final class DeckMap {
             int maxY = level.getMaxY();
             int minY = level.getMinY();
             BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
-            int[] rowHeight = new int[SIZE];
+            int[] rowHeight = new int[SAMPLE];
             Arrays.fill(rowHeight, playerY);
 
-            // py=0 is north (world Z smaller); north neighbor is the previous row.
-            for (int py = 0; py < SIZE; py++) {
-                int[] nextRow = new int[SIZE];
-                for (int px = 0; px < SIZE; px++) {
+            // 64×64 sample, then 2× nearest-neighbor. py=0 is north.
+            // hasChunk takes chunk coords (not the deprecated hasChunkAt(blockX, blockZ)).
+            for (int sy = 0; sy < SAMPLE; sy++) {
+                int[] nextRow = new int[SAMPLE];
+                int py = sy * 2;
+                for (int sx = 0; sx < SAMPLE; sx++) {
+                    int px = sx * 2;
                     int wx = originX + (px - HALF);
                     int wz = originZ + (py - HALF);
                     int argb = 0xFF000000;
                     int surfaceY = playerY;
                     try {
-                        if (level.hasChunkAt(wx, wz)) {
+                        if (level.hasChunk(wx >> 4, wz >> 4)) {
                             Sample s = sampleColumn(level, pos, wx, wz, playerY, minY, maxY,
-                                    lastHeight[py * SIZE + px]);
+                                    lastHeight[sy * SAMPLE + sx]);
                             surfaceY = s.y;
-                            int northY = rowHeight[px];
+                            int northY = rowHeight[sx];
                             argb = shade(s.color, s.water, s.waterDepth, surfaceY, northY, px, py);
                         }
                     } catch (Exception ignored) {
                     }
-                    lastHeight[py * SIZE + px] = surfaceY;
-                    nextRow[px] = surfaceY;
+                    lastHeight[sy * SAMPLE + sx] = surfaceY;
+                    nextRow[sx] = surfaceY;
                     image.setPixel(px, py, argb);
+                    image.setPixel(px + 1, py, argb);
+                    image.setPixel(px, py + 1, argb);
+                    image.setPixel(px + 1, py + 1, argb);
                 }
                 rowHeight = nextRow;
             }
