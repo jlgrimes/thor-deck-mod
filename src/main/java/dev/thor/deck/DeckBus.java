@@ -6,8 +6,8 @@ import java.nio.file.Path;
  * Combined file bus for ControlDeckPresentation ({@code feat/dualscreen-deck-v2}).
  *
  * <p>Primary: {@code thor_deck/state.json} with a monotonic {@code seq}. Nested
- * {@code map}, {@code inventory} (slots), {@code chat} (lines), and {@code hud}
- * (hp/hunger/coords/yaw). Split files stay as fallback:
+ * {@code map}, {@code inventory} (slots), {@code chat} (lines), {@code hud}
+ * (hp/hunger/coords/yaw), and {@code lastWalk} after a map tap is consumed. Split files stay as fallback:
  * inventory.json / map.json / hud.json / chat.json. {@code map.png}, {@code icons/},
  * and {@code command.json} are written/read beside this object.
  */
@@ -17,6 +17,7 @@ public final class DeckBus {
     private static String chat = "{\"seq\":0,\"lines\":[]}";
     private static String hud = "{}";
     private static String map = "{}";
+    private static String lastWalk = "";
     private static int seq = 0;
     private static boolean dirty;
 
@@ -62,6 +63,15 @@ public final class DeckBus {
         dirty = true;
     }
 
+    /** Last consumed map-walk command. Nested in {@code state.json} as {@code lastWalk}. */
+    public static synchronized void setLastWalk(String json) {
+        if (json == null || json.equals(lastWalk)) {
+            return;
+        }
+        lastWalk = json;
+        dirty = true;
+    }
+
     /** Assemble and atomically write {@code state.json}. Safe from the map worker. */
     public static synchronized void flush() {
         if (!dirty || dir == null) {
@@ -74,6 +84,7 @@ public final class DeckBus {
                 + ",\"inventory\":" + objectOrEmpty(inventory)
                 + ",\"chat\":" + objectOrEmpty(chat)
                 + ",\"hud\":" + objectOrEmpty(hud)
+                + (lastWalk.isEmpty() ? "" : ",\"lastWalk\":" + lastWalk)
                 + "}";
         DeckMap.atomicWrite(dir.resolve("state.json"), dir.resolve("state.json.tmp"), state);
     }

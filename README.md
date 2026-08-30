@@ -11,6 +11,7 @@ AYN Thor bottom-screen deck (Amethyst launcher). No sockets — files are the bu
 - [x] Inventory JSON dump (`inventory.json`)
 - [x] Item icons (`icons/<stem>.png`) — crisp pixel-art PNGs
 - [x] Tap-to-move (`command.json`) — slot swap when `seq` increases
+- [x] MAP walk (`command.json` `type=walk`) — `Entity.setPos` + `lastWalk` in `state.json`
 - [x] Armor + offhand in the JSON stream (slots 36–40)
 - [x] Hotbar `selected` field (0–8)
 - [x] CPU minimap (`map.png` + `map.json`) — 64×64 sample, PNG encode on worker
@@ -43,7 +44,7 @@ ControlDeckPresentation on `feat/dualscreen-deck-v2` prefers `state.json` (monot
 | `state.json` | mod | launcher | Primary bus. `{seq, map, inventory, chat, hud}`. Atomic write. |
 | `inventory.json` | mod | launcher | Split-file fallback. Atomic write. Written only when contents change. |
 | `icons/<stem>.png` | mod | launcher | Launcher looks up `slot.icon + ".png"` with `inScaled=false`. |
-| `command.json` | launcher | mod | `{"seq":N,"from":fromSlot,"to":toSlot,"button":0}`. Act only when `seq` increases. |
+| `command.json` | launcher | mod | Inventory: `{"seq":N,"from":fromSlot,"to":toSlot,"button":0}`. Walk: `{"seq":N,"type":"walk","mx":M,"mz":M,"x":X,"z":Z,"scale":1}`. Act only when `seq` increases. |
 | `map.png` | mod | launcher | 128×128 ARGB PNG. 1 pixel = 1 block. Player is the center pixel (64, 64). |
 | `map.json` | mod | launcher | `{seq, x, y, z, yaw, dim, w, h, scale, biome}`. `scale` is 1. |
 | `hud.json` | mod | launcher | Health, hunger, air, xp, armor, pos, biome, time, weather, effects. |
@@ -57,6 +58,8 @@ ControlDeckPresentation on `feat/dualscreen-deck-v2` prefers `state.json` (monot
 
 HUD fields in `state.json` / `hud.json`: `hp`, `hunger`, `x`/`y`/`z`, `yaw` (plus
 maxHp, saturation, air, xp, level, armor, pitch, biome, dim, time, dayTime, weather, effects).
+After a MAP walk is consumed, `state.json` also includes `lastWalk`
+(`seq`, `type`, dest `x`/`z`/`y`, optional `mx`/`mz`, `applied`).
 
 ### `inventory.json`
 
@@ -100,11 +103,33 @@ name appends a hex hash so renamed stacks don't collide.
 ### `command.json`
 
 The launcher writes a new object whenever the user drops an item onto another
-cell. The mod polls every client tick (mtime + `seq`). Duplicate / stale `seq`
-values are ignored. Missing file, partial JSON, and `player == null` are no-ops.
+cell **or taps the minimap**. The mod polls every client tick (mtime + `seq`).
+Duplicate / stale `seq` values are ignored. Missing file, partial JSON, and
+`player == null` are no-ops.
 
-`button: 0` is a full-stack swap (left click). The move is applied on the client
-tick thread via `Inventory.setItem` / container click (see NOTES.md).
+Inventory swap when `from` and `to` are present (and `type` is not `walk`):
+
+```json
+{"seq":12,"from":0,"to":9,"button":0}
+```
+
+`button: 0` is a full-stack swap (left click). Applied on the client tick
+thread via `Inventory.setItem` / container click (see NOTES.md).
+
+MAP walk when `"type":"walk"`:
+
+```json
+{"seq":100,"type":"walk","mx":101,"mz":42,"x":48,"z":11,"scale":1}
+```
+
+- `x` / `z` are world coordinates and are the preferred destination.
+- `mx` / `mz` are 128×128 minimap cells (player cell is (64, 64)). Used only
+  when `x`/`z` are absent: `world = player + (cell - 64) * scale`.
+- No pathfinding. The client calls official-Mojang `Entity.setPos(x, surfaceY, z)`
+  (`Heightmap.Types.WORLD_SURFACE` for Y when the chunk is loaded) and
+  `Entity.setOldPosAndRot()`. A consume always writes `lastWalk` into
+  `state.json` (`applied: true/false`) so a walk is never silently dropped.
+- Seq gate is the same as inventory: only act when `seq` increases.
 
 
 The launcher should show **Map** as the default bottom-screen tab. Inventory,
