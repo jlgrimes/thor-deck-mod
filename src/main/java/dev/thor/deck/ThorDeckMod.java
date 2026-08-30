@@ -18,7 +18,8 @@ import java.nio.file.StandardCopyOption;
  * Client-only companion for the AYN Thor bottom-screen deck. Files under
  * {@code <gameDir>/thor_deck/} are the IPC bus (no sockets):
  * <ul>
- *   <li>{@code inventory.json} — mod writes, launcher reads</li>
+ *   <li>{@code state.json} — combined bus, monotonic seq (map + inventory + chat + hud)</li>
+ *   <li>{@code inventory.json} — split-file fallback</li>
  *   <li>{@code icons/<stem>.png} — mod writes, launcher reads</li>
  *   <li>{@code command.json} — launcher writes, mod reads (tap-to-move)</li>
  *   <li>{@code map.png} / {@code map.json} — CPU minimap (MapColor sample)</li>
@@ -59,6 +60,7 @@ public class ThorDeckMod implements ClientModInitializer {
         System.out.println("[ThorDeck] inventory -> " + outFile + "  icons -> " + iconDir
                 + "  map/hud/chat -> " + dir);
         DeckChat.init(dir);
+        DeckBus.init(dir);
 
         ClientTickEvents.END_CLIENT_TICK.register(this::onClientTick);
     }
@@ -67,16 +69,17 @@ public class ThorDeckMod implements ClientModInitializer {
         DeckChat.tick();
         LocalPlayer player = client.player;
         if (player == null) {
+            DeckBus.flush();
             return;
         }
         pollCommand(client, player);
         DeckHud.tick(client, player, dir);
         DeckMap.tick(client, player, dir);
-        if (++tickCounter < WRITE_EVERY_TICKS) {
-            return;
+        if (++tickCounter >= WRITE_EVERY_TICKS) {
+            tickCounter = 0;
+            writeInventory(client, player);
         }
-        tickCounter = 0;
-        writeInventory(client, player);
+        DeckBus.flush();
     }
 
     private void pollCommand(Minecraft client, LocalPlayer player) {
@@ -113,6 +116,7 @@ public class ThorDeckMod implements ClientModInitializer {
             return;
         }
         lastJson = json;
+        DeckBus.setInventory(json);
         try {
             Files.writeString(tmpFile, json, StandardCharsets.UTF_8);
             Files.move(tmpFile, outFile,

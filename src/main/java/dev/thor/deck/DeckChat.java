@@ -93,7 +93,9 @@ public final class DeckChat {
                     .append(",\"kind\":\"").append(line.kind).append("\"}");
         }
         sb.append("]}");
-        DeckMap.atomicWrite(dir.resolve("chat.json"), dir.resolve("chat.json.tmp"), sb.toString());
+        String json = sb.toString();
+        DeckMap.atomicWrite(dir.resolve("chat.json"), dir.resolve("chat.json.tmp"), json);
+        DeckBus.setChat(json);
     }
 
     private static String textOf(Component message) {

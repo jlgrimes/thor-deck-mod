@@ -7,14 +7,15 @@ AYN Thor bottom-screen deck (Amethyst launcher). No sockets — files are the bu
 
 ## Status
 
+- [x] Combined `state.json` bus (monotonic seq) matching ControlDeckPresentation split-file fallback
 - [x] Inventory JSON dump (`inventory.json`)
 - [x] Item icons (`icons/<stem>.png`) — crisp pixel-art PNGs
 - [x] Tap-to-move (`command.json`) — slot swap when `seq` increases
 - [x] Armor + offhand in the JSON stream (slots 36–40)
 - [x] Hotbar `selected` field (0–8)
-- [x] CPU minimap (`map.png` + `map.json`) — MapColor sample, not FBO blit
-- [x] HUD (`hud.json`) — health, hunger, pos, biome, time, effects
-- [x] Chat ring (`chat.json`) — last 40 lines
+- [x] CPU minimap (`map.png` + `map.json`) — 64×64 sample, PNG encode on worker
+- [x] HUD (`hud.json` + nested in `state.json`) — health, hunger, pos, biome, time, effects
+- [x] Chat ring (`chat.json` + nested in `state.json`) — last 40 lines
 
 ## Target
 
@@ -32,15 +33,30 @@ unless you must.
 
 ## File contract (`<gameDir>/thor_deck/`)
 
+ControlDeckPresentation on `feat/dualscreen-deck-v2` prefers `state.json` (monotonic
+`seq`) and falls back to the split files. The mod writes both. Game dir is
+`<gameDir>/thor_deck/` (Pojav: `.minecraft/thor_deck`); the launcher also probes
+`thor_deck/` and `deck/`.
+
 | File | Writer | Reader | Notes |
 |---|---|---|---|
-| `inventory.json` | mod | launcher | Atomic write (`tmp` + move). Written only when contents change. |
+| `state.json` | mod | launcher | Primary bus. `{seq, map, inventory, chat, hud}`. Atomic write. |
+| `inventory.json` | mod | launcher | Split-file fallback. Atomic write. Written only when contents change. |
 | `icons/<stem>.png` | mod | launcher | Launcher looks up `slot.icon + ".png"` with `inScaled=false`. |
 | `command.json` | launcher | mod | `{"seq":N,"from":fromSlot,"to":toSlot,"button":0}`. Act only when `seq` increases. |
 | `map.png` | mod | launcher | 128×128 ARGB PNG. 1 pixel = 1 block. Player is the center pixel (64, 64). |
 | `map.json` | mod | launcher | `{seq, x, y, z, yaw, dim, w, h, scale, biome}`. `scale` is 1. |
 | `hud.json` | mod | launcher | Health, hunger, air, xp, armor, pos, biome, time, weather, effects. |
 | `chat.json` | mod | launcher | `{seq, lines:[{from, text, kind}]}` last 40. `kind` is `chat`/`system`/`action`. |
+
+### `state.json`
+
+```json
+{"seq":12,"map":{"seq":4,"x":1.20,"y":64.00,"z":-8.40,"yaw":90.00,"dim":"minecraft:overworld","w":128,"h":128,"scale":1,"biome":"plains"},"inventory":{"size":41,"selected":0,"slots":[{"i":0,"id":"minecraft:dirt","n":"Dirt","c":2,"icon":"dirt"}]},"chat":{"seq":3,"lines":[{"from":"Steve","text":"hello","kind":"chat"}]},"hud":{"seq":12,"hp":20.00,"maxHp":20.00,"hunger":20,"x":1.20,"y":64.00,"z":-8.40,"yaw":90.00}}
+```
+
+HUD fields in `state.json` / `hud.json`: `hp`, `hunger`, `x`/`y`/`z`, `yaw` (plus
+maxHp, saturation, air, xp, level, armor, pitch, biome, dim, time, dayTime, weather, effects).
 
 ### `inventory.json`
 
@@ -97,16 +113,16 @@ HUD, and chat are additional tabs on the same file bus.
 ### `map.png` / `map.json`
 
 CPU-sampled top-down surface. **Not** an FBO blit of the in-game map item
-(that path is broken on Pojav GLES). Every 10 ticks, or when the player moved
-≥ 2 blocks or yaw changed ≥ 15°, but never more often than every 5 ticks:
+(that path is broken on Pojav GLES). Every 20 ticks (~1s), or when the player
+moved ≥ 2 blocks or yaw changed ≥ 15°, but never more often than every 10 ticks,
+and never while a PNG write is already in flight:
 
-1. On the client thread, sample a 128×128 column around the player.
-2. For each `(dx, dz)` in `-64..63`, scan down from last-known height (or
-   `playerY+16`, capped at `playerY+32`) at most 24 blocks for the first
-   non-air block with a `MapColor`.
-3. Water: count a few blocks of depth for the classic water-blue shade.
-4. Shade land darker if it is lower than its north neighbor (vanilla map).
-5. Write PNG atomically (`map.png.tmp` then `Files.move`).
+1. On the client thread, sample a 64×64 grid (every other column) using
+   `Heightmap.Types.WORLD_SURFACE` plus a short water-depth peek — not a
+   128×128×24 walk.
+2. Nearest-neighbor upscale to 128×128 (player cell stays (64, 64)).
+3. Shade land darker if it is lower than its north neighbor (vanilla map).
+4. Encode PNG + write `map.png` / `map.json` / `state.json` on a daemon worker.
 
 Paused game, null world, and null player skip the write. Exceptions are
 swallowed so a map miss never crashes the game. Nether and End still sample

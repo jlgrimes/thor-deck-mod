@@ -37,6 +37,7 @@ public final class DeckHud {
             ticks = 0;
             String json = build(client, player);
             DeckMap.atomicWrite(dir.resolve("hud.json"), dir.resolve("hud.json.tmp"), json);
+            DeckBus.setHud(json);
         } catch (Exception ignored) {
         }
     }
