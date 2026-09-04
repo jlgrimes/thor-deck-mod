@@ -1,7 +1,6 @@
 package dev.thor.deck;
 
 import net.fabricmc.api.ClientModInitializer;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
@@ -67,13 +66,28 @@ public class ThorDeckMod implements ClientModInitializer {
             System.err.println("[ThorDeck] DeckChat.init skipped (no fabric-api?): " + t);
         }
 
-        // Prefer fabric-api client tick when present; else harden-0421 zero-api thread.
+        // Prefer fabric-api client tick when present (reflective — no hard link).
+        // Else harden-0421 ZeroApiTickBoot. Keeps ThorDeckMod loadable with zero fabric-api.
         boolean fabricTick = false;
         try {
-            Class.forName("net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents");
-            ClientTickEvents.END_CLIENT_TICK.register(this::onClientTick);
+            Class<?> cte = Class.forName(
+                    "net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents");
+            Object endTick = cte.getField("END_CLIENT_TICK").get(null);
+            Class<?> endTickIface = Class.forName(
+                    "net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents$EndTick");
+            java.lang.reflect.Method register = endTick.getClass().getMethod("register", endTickIface);
+            Object hook = java.lang.reflect.Proxy.newProxyInstance(
+                    endTickIface.getClassLoader(),
+                    new Class<?>[]{endTickIface},
+                    (proxy, method, args) -> {
+                        if ("onEndTick".equals(method.getName()) && args != null && args.length == 1) {
+                            onClientTick((net.minecraft.client.Minecraft) args[0]);
+                        }
+                        return null;
+                    });
+            register.invoke(endTick, hook);
             fabricTick = true;
-            System.out.println("[ThorDeck] using fabric-api ClientTickEvents");
+            System.out.println("[ThorDeck] using fabric-api ClientTickEvents (reflective)");
         } catch (Throwable t) {
             System.err.println("[ThorDeck] fabric-api tick missing, ZeroApiTickBoot: " + t);
         }
