@@ -60,10 +60,26 @@ public class ThorDeckMod implements ClientModInitializer {
         }
         System.out.println("[ThorDeck] inventory -> " + outFile + "  icons -> " + iconDir
                 + "  map/hud/chat -> " + dir);
-        DeckChat.init(dir);
         DeckBus.init(dir);
+        try {
+            DeckChat.init(dir);
+        } catch (Throwable t) {
+            System.err.println("[ThorDeck] DeckChat.init skipped (no fabric-api?): " + t);
+        }
 
-        ClientTickEvents.END_CLIENT_TICK.register(this::onClientTick);
+        // Prefer fabric-api client tick when present; else harden-0421 zero-api thread.
+        boolean fabricTick = false;
+        try {
+            Class.forName("net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents");
+            ClientTickEvents.END_CLIENT_TICK.register(this::onClientTick);
+            fabricTick = true;
+            System.out.println("[ThorDeck] using fabric-api ClientTickEvents");
+        } catch (Throwable t) {
+            System.err.println("[ThorDeck] fabric-api tick missing, ZeroApiTickBoot: " + t);
+        }
+        if (!fabricTick) {
+            ZeroApiTickBoot.start(this);
+        }
     }
 
     private void onClientTick(Minecraft client) {
