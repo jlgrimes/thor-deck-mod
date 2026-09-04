@@ -3,7 +3,7 @@
   "id": "thor_deck",
   "version": "${version}",
   "name": "Thor Deck",
-  "description": "Streams the player inventory to a file for the AYN Thor bottom-screen deck.",
+  "description": "Thor Deck IPC for AYN Thor bottom screen. Works zero fabric-api via ZeroApiTickBoot (harden-0421).",
   "authors": ["jlgrimes"],
   "license": "MIT",
   "environment": "client",
@@ -12,7 +12,6 @@
   },
   "depends": {
     "fabricloader": ">=0.16.0",
-    "minecraft": "*",
-    "fabric-api": "*"
+    "minecraft": "*"
   }
 }

@@ -1,17 +1,19 @@
 package dev.thor.deck;
 
 import com.mojang.authlib.GameProfile;
-import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
 import net.minecraft.network.chat.Component;
 
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.Deque;
 
 /**
  * Last 40 chat/system/action lines → {@code thor_deck/chat.json}.
- * Subscribes to Fabric {@link ClientReceiveMessageEvents#CHAT} and
- * {@link ClientReceiveMessageEvents#GAME}. Writes are debounced by 2 ticks.
+ * harden-0502: fabric-api ClientReceiveMessageEvents is optional/reflective —
+ * no hard import so Knot/Android loads DeckChat when fabric-api is absent.
+ * Writes are debounced by 2 ticks.
  */
 public final class DeckChat {
     private static final int CAP = 40;
@@ -22,23 +24,63 @@ public final class DeckChat {
     private static int seq = 0;
     private static int debounce = -1;
     private static boolean dirty = false;
+    private static boolean hooksOk = false;
 
     private DeckChat() {}
 
     public static void init(Path outDir) {
         dir = outDir;
-        ClientReceiveMessageEvents.CHAT.register((message, signedMessage, sender, params, timestamp) -> {
-            try {
-                append(profileName(sender), textOf(message), "chat");
-            } catch (Exception ignored) {
-            }
-        });
-        ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
-            try {
-                append("", textOf(message), overlay ? "action" : "system");
-            } catch (Exception ignored) {
-            }
-        });
+        hooksOk = false;
+        try {
+            Class<?> events = Class.forName(
+                    "net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents");
+            Object chat = events.getField("CHAT").get(null);
+            Object game = events.getField("GAME").get(null);
+            Class<?> chatIface = Class.forName(
+                    "net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents$Chat");
+            Class<?> gameIface = Class.forName(
+                    "net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents$Game");
+            Method chatReg = chat.getClass().getMethod("register", chatIface);
+            Method gameReg = game.getClass().getMethod("register", gameIface);
+            Object chatHook = Proxy.newProxyInstance(
+                    chatIface.getClassLoader(),
+                    new Class<?>[]{chatIface},
+                    (proxy, method, args) -> {
+                        if (args != null && args.length >= 1) {
+                            try {
+                                Object message = args[0];
+                                Object sender = args.length > 2 ? args[2] : null;
+                                append(profileName(sender), textOf(message), "chat");
+                            } catch (Exception ignored) {
+                            }
+                        }
+                        return null;
+                    });
+            Object gameHook = Proxy.newProxyInstance(
+                    gameIface.getClassLoader(),
+                    new Class<?>[]{gameIface},
+                    (proxy, method, args) -> {
+                        if (args != null && args.length >= 1) {
+                            try {
+                                Object message = args[0];
+                                boolean overlay = args.length > 1 && Boolean.TRUE.equals(args[1]);
+                                append("", textOf(message), overlay ? "action" : "system");
+                            } catch (Exception ignored) {
+                            }
+                        }
+                        return null;
+                    });
+            chatReg.invoke(chat, chatHook);
+            gameReg.invoke(game, gameHook);
+            hooksOk = true;
+            System.out.println("[ThorDeck] DeckChat hooks via reflective fabric-api");
+        } catch (Throwable t) {
+            System.err.println("[ThorDeck] DeckChat hooks skipped (no fabric-api): " + t);
+        }
+    }
+
+    public static boolean hooksActive() {
+        return hooksOk;
     }
 
     public static void tick() {
@@ -57,6 +99,11 @@ public final class DeckChat {
             write();
         } catch (Exception ignored) {
         }
+    }
+
+    /** Host/test helper: append a line without fabric-api. */
+    public static void appendForTest(String from, String text, String kind) {
+        append(from == null ? "" : from, text, kind == null ? "chat" : kind);
     }
 
     private static void append(String from, String text, String kind) {
@@ -81,43 +128,86 @@ public final class DeckChat {
     private static void write() {
         seq++;
         StringBuilder sb = new StringBuilder(256 + LINES.size() * 64);
-        sb.append("{\"seq\":" ).append(seq).append(",\"lines\":[");
+        sb.append("{\"seq\":").append(seq).append(",\"lines\":[");
         boolean first = true;
         for (Line line : LINES) {
             if (!first) {
                 sb.append(',');
             }
             first = false;
-            sb.append("{\"from\":\"").append(DeckMap.escape(line.from)).append('"')
-                    .append(",\"text\":\"").append(DeckMap.escape(line.text)).append('"')
+            sb.append("{\"from\":\"").append(escape(line.from)).append('"')
+                    .append(",\"text\":\"").append(escape(line.text)).append('"')
                     .append(",\"kind\":\"").append(line.kind).append("\"}");
         }
         sb.append("]}");
         String json = sb.toString();
-        DeckMap.atomicWrite(dir.resolve("chat.json"), dir.resolve("chat.json.tmp"), json);
-        DeckBus.setChat(json);
+        atomicWrite(dir.resolve("chat.json"), dir.resolve("chat.json.tmp"), json);
+        try {
+            DeckBus.setChat(json);
+        } catch (Throwable ignored) {
+        }
     }
 
-    private static String textOf(Component message) {
+    private static String escape(String s) {
+        if (s == null) return "";
+        try {
+            return DeckMap.escape(s);
+        } catch (Throwable t) {
+            return s.replace("\\", "\\\\").replace("\"", "\\\"");
+        }
+    }
+
+    private static void atomicWrite(Path dest, Path tmp, String json) {
+        try {
+            java.nio.file.Files.writeString(tmp, json);
+            try {
+                java.nio.file.Files.move(tmp, dest,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                        java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            } catch (Exception e) {
+                java.nio.file.Files.move(tmp, dest,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private static String textOf(Object message) {
         if (message == null) {
             return "";
         }
         try {
-            return message.getString();
+            if (message instanceof Component) {
+                return ((Component) message).getString();
+            }
+            Method m = message.getClass().getMethod("getString");
+            Object r = m.invoke(message);
+            return r == null ? "" : r.toString();
         } catch (Exception e) {
             return "";
         }
     }
 
-    private static String profileName(GameProfile sender) {
+    private static String profileName(Object sender) {
         if (sender == null) {
             return "";
         }
         try {
-            String n = sender.name();
-            return n == null ? "" : n;
+            if (sender instanceof GameProfile) {
+                String n = ((GameProfile) sender).name();
+                return n == null ? "" : n;
+            }
+            Method m = sender.getClass().getMethod("name");
+            Object r = m.invoke(sender);
+            return r == null ? "" : r.toString();
         } catch (Exception e) {
-            return "";
+            try {
+                Method m = sender.getClass().getMethod("getName");
+                Object r = m.invoke(sender);
+                return r == null ? "" : r.toString();
+            } catch (Exception e2) {
+                return "";
+            }
         }
     }
 
